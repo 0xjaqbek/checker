@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meld Banker NFT Checker</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/web3/4.3.0/web3.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.9.0/ethers.umd.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 20px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            border: 1px solid #ccc;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .button {
+            background-color: #4CAF50;
+            border: none;
+            color: white;
+            padding: 10px 20px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 4px 2px;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+        }
+        .button:hover {
+            background-color: #45a049;
+        }
+        .button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .input {
+            width: 100%;
+            padding: 12px;
+            margin: 8px 0;
+            box-sizing: border-box;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .alert {
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .alert-success {
+            background-color: #dff0d8;
+            border: 1px solid #d0e9c6;
+            color: #3c763d;
+        }
+        .alert-error {
+            background-color: #f2dede;
+            border: 1px solid #ebcccc;
+            color: #a94442;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            z-index: 1000;
+        }
+        .modal-content {
+            background-color: white;
+            margin: 15% auto;
+            padding: 20px;
+            border-radius: 8px;
+            width: 80%;
+            max-width: 500px;
+        }
+        #wcUri {
+            width: 100%;
+            height: 100px;
+            margin: 10px 0;
+            padding: 8px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Meld Banker NFT Checker</h1>
+        <h3>You must hold at least 1 MELD Banker NFT</h3>
+        
+        <button id="connectButton" class="button">Connect Wallet</button>
+        <div id="wcUriContainer" style="display: none;">
+            <h4>WalletConnect URI (for debugging):</h4>
+            <textarea id="wcUri" readonly></textarea>
+        </div>
+        
+        <input type="text" id="addressInput" class="input" readonly placeholder="Connected wallet address">
+        <button id="checkButton" class="button" disabled>Check Eligibility</button>
+        
+        <div id="statusMessage" style="display: none;"></div>
+        
+        <div id="networkModal" class="modal">
+            <div class="modal-content">
+                <h3>Switch to Meld Network</h3>
+                <p>Your wallet is not connected to the Meld network. Would you like to switch?</p>
+                <button id="switchNetworkButton" class="button">Switch to Meld Network</button>
+                <button id="cancelNetworkButton" class="button" style="background-color: #dc3545;">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const MELD_NETWORK = {
+            chainId: '0x13d92e8d',
+            chainName: 'Meld',
+            nativeCurrency: {
+                name: 'gMELD',
+                symbol: 'gMELD',
+                decimals: 18
+            },
+            rpcUrls: ['https://subnets.avax.network/meld/mainnet/rpc'],
+            blockExplorerUrls: ['https://meldscan.io']
+        };
+
+        const minABI = [
+            {
+                constant: true,
+                inputs: [{ name: "_owner", type: "address" }],
+                name: "balanceOf",
+                outputs: [{ name: "balance", type: "uint256" }],
+                type: "function",
+            }
+        ];
+
+        let provider;
+        let selectedAccount;
+
+        async function connectWallet() {
+            try {
+                if (typeof window.ethereum !== 'undefined') {
+                    provider = window.ethereum;
+                    const accounts = await provider.request({ method: 'eth_requestAccounts' });
+                    
+                    // Check network
+                    const chainId = await provider.request({ method: 'eth_chainId' });
+                    if (chainId !== MELD_NETWORK.chainId) {
+                        document.getElementById('networkModal').style.display = 'block';
+                    } else {
+                        handleAccountsChanged(accounts);
+                    }
+
+                    provider.on('accountsChanged', handleAccountsChanged);
+                    provider.on('chainChanged', () => window.location.reload());
+                    
+                    // Log WalletConnect URI if available
+                    if (provider.wc) {
+                        document.getElementById('wcUriContainer').style.display = 'block';
+                        document.getElementById('wcUri').value = provider.wc.uri;
+                    }
+                } else {
+                    showStatus('Please install MetaMask!', 'error');
+                }
+            } catch (error) {
+                showStatus('Error connecting wallet: ' + error.message, 'error');
+            }
+        }
+
+        async function switchToMeldNetwork() {
+            try {
+                await provider.request({
+                    method: 'wallet_addEthereumChain',
+                    params: [MELD_NETWORK],
+                });
+                document.getElementById('networkModal').style.display = 'none';
+            } catch (error) {
+                showStatus('Failed to switch network: ' + error.message, 'error');
+            }
+        }
+
+        function handleAccountsChanged(accounts) {
+            if (accounts.length === 0) {
+                showStatus('Please connect to MetaMask.', 'error');
+            } else {
+                selectedAccount = accounts[0];
+                document.getElementById('addressInput').value = selectedAccount;
+                document.getElementById('checkButton').disabled = false;
+                showStatus('Wallet connected!', 'success');
+            }
+        }
+
+        async function checkEligibility() {
+            try {
+                const web3 = new Web3('https://subnets.avax.network/meld/mainnet/rpc');
+                const tokenAddress = '0x333000Dca02578EfE421BE77FF0aCC0F947290f0';
+                const contract = new web3.eth.Contract(minABI, tokenAddress);
+                
+                const balance = await contract.methods.balanceOf(selectedAccount).call();
+                
+                if (web3.utils.toBN(balance).gt(web3.utils.toBN('0'))) {
+                    showStatus('Congratulations! You are eligible!', 'success');
+                } else {
+                    showStatus('Sorry, you are not eligible. You need at least 1 MELD Banker NFT.', 'error');
+                }
+            } catch (error) {
+                showStatus('Error checking eligibility: ' + error.message, 'error');
+            }
+        }
+
+        function showStatus(message, type) {
+            const statusElement = document.getElementById('statusMessage');
+            statusElement.textContent = message;
+            statusElement.className = `alert alert-${type}`;
+            statusElement.style.display = 'block';
+        }
+
+        // Event Listeners
+        document.getElementById('connectButton').addEventListener('click', connectWallet);
+        document.getElementById('checkButton').addEventListener('click', checkEligibility);
+        document.getElementById('switchNetworkButton').addEventListener('click', switchToMeldNetwork);
+        document.getElementById('cancelNetworkButton').addEventListener('click', () => {
+            document.getElementById('networkModal').style.display = 'none';
+        });
+    </script>
+</body>
+</html>
